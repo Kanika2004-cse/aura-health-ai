@@ -1,0 +1,122 @@
+@import "tailwindcss";
+
+@theme {
+  --font-display: "Sora", ui-sans-serif, system-ui, sans-serif;
+  --font-sans: "Plus Jakarta Sans", ui-sans-serif, system-ui, sans-serif;
+
+  --color-void: #07080b;
+  --color-ink: #0c1016;
+  --color-panel: #121821;
+  --color-raised: #181f2a;
+  --color-line: rgb(255 255 255 / 0.08);
+  --color-haze: #8d97a8;
+  --color-snow: #f3f6f8;
+  --color-pulse: #4cc9a8;
+  --color-pulse-dim: #2f8f78;
+  --color-flux: #7aa2ff;
+  --color-ember: #d9a441;
+  --color-alert: #e35d6a;
+
+  --shadow-glow: 0 0 40px rgb(76 201 168 / 0.12);
+  --shadow-lift: 0 18px 40px rgb(0 0 0 / 0.35);
+
+  --radius-xl: 1.5rem;
+  --radius-lg: 1.15rem;
+  --radius-md: 0.9rem;
+}
+
+:root[data-theme='light'] {
+  --color-void: #f4f7fa;
+  --color-ink: #ffffff;
+  --color-panel: #ffffff;
+  --color-raised: #e8eef3;
+  --color-line: rgb(15 23 42 / 0.11);
+  --color-haze: #5c6878;
+  --color-snow: #17212e;
+  --shadow-lift: 0 18px 40px rgb(15 23 42 / 0.1);
+}
+
+html,
+body,
+#root {
+  min-height: 100%;
+  min-height: 100dvh;
+  width: 100%;
+}
+
+.aura-safe-screen {
+  box-sizing: border-box;
+  padding-top: env(safe-area-inset-top, 0px);
+  padding-right: env(safe-area-inset-right, 0px);
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+  padding-left: env(safe-area-inset-left, 0px);
+}
+
+html {
+  background: var(--color-void);
+}
+
+body {
+  margin: 0;
+  min-width: 320px;
+  overflow-x: clip;
+  color: var(--color-snow);
+  font-family: var(--font-sans);
+  background:
+    radial-gradient(1200px 600px at 80% -10%, rgb(122 162 255 / 0.08), transparent 55%),
+    radial-gradient(900px 500px at -10% 0%, rgb(76 201 168 / 0.07), transparent 50%),
+    var(--color-void);
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+}
+
+* {
+  scrollbar-width: thin;
+  scrollbar-color: rgb(255 255 255 / 0.12) transparent;
+}
+
+:root[data-theme='light'] * {
+  scrollbar-color: rgb(15 23 42 / 0.2) transparent;
+}
+
+::selection {
+  background: rgb(76 201 168 / 0.28);
+}
+
+@keyframes aura-rise {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes aura-pulse {
+  0%,
+  100% {
+    opacity: 0.45;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
+.aura-rise {
+  animation: aura-rise 0.55s ease-out both;
+}
+
+.aura-grid {
+  background-image:
+    linear-gradient(rgb(255 255 255 / 0.03) 1px, transparent 1px),
+    linear-gradient(90deg, rgb(255 255 255 / 0.03) 1px, transparent 1px);
+  background-size: 48px 48px;
+}
+
+:root[data-theme='light'] .aura-grid {
+  background-image:
+    linear-gradient(rgb(15 23 42 / 0.035) 1px, transparent 1px),
+    linear-gradient(90deg, rgb(15 23 42 / 0.035) 1px, transparent 1px);
+}
