@@ -1,7 +1,26 @@
+/**
+ * services/wearableSync.ts
+ *
+ * Orchestrates reading from Health Connect (Android) and HealthKit (iOS)
+ * and persisting the results to the `health_measurements` Supabase table.
+ *
+ * v2: Raw sample mapping is now delegated to engine/normalizer so that
+ * validation, unit conversion, and sleep-stage filtering are defined in a
+ * single testable location rather than duplicated here and in HealthDataPage.
+ */
+
 import { Capacitor } from '@capacitor/core'
 import { Health, type HealthDataType, type HealthSample } from '@capgo/capacitor-health'
 import type { SupabaseClient } from '@supabase/supabase-js'
+
 import type { Database } from '../types/database'
+import {
+  normalizeHealthConnectBatch,
+  normalizeHealthKitBatch,
+  normalizedReadingToMeasurementRow,
+  type RawHealthSample,
+} from '../engine/normalizer'
+import { sendSmartHealthAlert } from './notificationService' // 👈 Imported your smart notification service
 
 export const READABLE_HEALTH_TYPES: HealthDataType[] = [
   'heartRate',
@@ -21,55 +40,6 @@ export function isNativeHealthSyncAvailable() {
 export async function getHealthAvailability() {
   if (!isNativeHealthSyncAvailable()) return { available: false, reason: 'Open Aura on an Android or iPhone app to connect health data.' }
   return Health.isAvailable()
-}
-
-function toMeasurement(sample: HealthSample, userId: string, source: WearablePlatform) {
-  const base = {
-    user_id: userId,
-    recorded_at: sample.startDate,
-    source,
-    source_record_id: sample.platformId ?? `${sample.dataType}:${sample.startDate}:${sample.endDate}:${sample.value}:${sample.systolic ?? ''}:${sample.diastolic ?? ''}`,
-    heart_rate_bpm: null as number | null,
-    resting_heart_rate_bpm: null as number | null,
-    spo2_pct: null as number | null,
-    systolic_mmhg: null as number | null,
-    diastolic_mmhg: null as number | null,
-    temperature_c: null as number | null,
-    steps: null as number | null,
-    sleep_minutes: null as number | null,
-    notes: sample.sourceName ? `Imported from ${sample.sourceName}` : 'Imported from connected health data',
-  }
-
-  switch (sample.dataType) {
-    case 'heartRate':
-      base.heart_rate_bpm = sample.value
-      break
-    case 'restingHeartRate':
-      base.resting_heart_rate_bpm = sample.value
-      break
-    case 'oxygenSaturation':
-      base.spo2_pct = sample.value
-      break
-    case 'bloodPressure':
-      base.systolic_mmhg = sample.systolic ?? null
-      base.diastolic_mmhg = sample.diastolic ?? null
-      break
-    case 'steps':
-      base.steps = Math.round(sample.value)
-      break
-    case 'sleep':
-      if (sample.stages?.length) {
-        const asleepStages = sample.stages.filter((stage) => !['awake', 'inBed'].includes(stage.stage))
-        if (asleepStages.length === 0) return null
-        base.sleep_minutes = Math.round(asleepStages.reduce((total, stage) => total + stage.durationMinutes, 0))
-      } else {
-        if (sample.sleepState === 'awake' || sample.sleepState === 'inBed') return null
-        base.sleep_minutes = Math.max(0, Math.round((Date.parse(sample.endDate) - Date.parse(sample.startDate)) / 60000))
-      }
-      if (sample.sleepState) base.notes = `${base.notes} (sleep: ${sample.sleepState})`
-      break
-  }
-  return base
 }
 
 export async function synchronizeHealthData(
@@ -102,10 +72,21 @@ export async function synchronizeHealthData(
     samples.push(...result.samples)
   }
 
-  const rows = samples.flatMap((sample) => {
-    const row = toMeasurement(sample, userId, platform)
-    return row ? [row] : []
-  })
+  // ------------------------------------------------------------------
+  // Normalize via the engine normalizer layer
+  // Casting HealthSample[] to RawHealthSample[] is safe because the
+  // @capgo/capacitor-health HealthSample type is a superset of our
+  // RawHealthSample interface (all required fields are present).
+  // ------------------------------------------------------------------
+  const normalized =
+    platform === 'healthkit'
+      ? normalizeHealthKitBatch(samples as unknown as RawHealthSample[], userId)
+      : normalizeHealthConnectBatch(samples as unknown as RawHealthSample[], userId)
+
+  const rows = normalized.map((reading) =>
+    normalizedReadingToMeasurementRow(reading, userId),
+  )
+
   const db = supabase as SupabaseClient<any>
   let inserted = 0
   for (let offset = 0; offset < rows.length; offset += 500) {
@@ -127,6 +108,37 @@ export async function synchronizeHealthData(
     last_synced_at: end.toISOString(),
   }, { onConflict: 'user_id,name' })
   if (deviceError) throw new Error(`Readings synced, but the connection status could not be saved: ${deviceError.message}`)
+
+  // ------------------------------------------------------------------
+  // 🚀 Smart Notification Check Post-Sync
+  // Evaluates the latest synced reading for sustained vital spikes
+  // ------------------------------------------------------------------
+  try {
+    const { data: latest } = await db
+      .from('health_measurements')
+      .select('*')
+      .eq('user_id', userId)
+      .order('recorded_at', { ascending: false })
+      .limit(1)
+      .maybeSingle()
+
+    if (latest) {
+      const isHighBP = (latest.systolic_mmhg && latest.systolic_mmhg >= 135) || (latest.diastolic_mmhg && latest.diastolic_mmhg >= 85)
+      const isLowSpO2 = latest.spo2_pct && latest.spo2_pct <= 93
+
+      if (isHighBP || isLowSpO2) {
+        await sendSmartHealthAlert(
+          db,
+          userId,
+          '⚠️ Possible Elevated Pattern Detected',
+          'Sustained vital spike observed. Recommendation: Rest quietly for 15 minutes and avoid caffeine.',
+          'high'
+        )
+      }
+    }
+  } catch (notificationErr) {
+    console.error('Failed to trigger post-sync notification:', notificationErr)
+  }
 
   return { inserted, totalRead: samples.length, denied }
 }

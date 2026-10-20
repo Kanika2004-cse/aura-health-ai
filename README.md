@@ -1,8 +1,16 @@
 # Aura Health AI
 
-Personal health intelligence product. Phase 1 is foundation only: design system, app shell, demo dashboard, and a private Supabase schema.
+Aura Health AI is a personal health risk insights and decision support application. It brings user-entered or connected health measurements together with personal baselines, trends, and context to surface changes for review.
 
-This is not a medical device. Demo values on the dashboard are labeled as sample UI.
+The analysis is informational and non-diagnostic. It is not a medical device and does not predict disease or replace professional medical advice. Users should discuss health concerns with a qualified clinician. Demo values are labeled as sample UI.
+
+## How it works
+
+- Health measurements and context are stored in the user's private Supabase account; the app can also run locally in demo mode.
+- Personal analysis evaluates measurements against the user's earlier readings and can flag statistical outliers when enough history is available.
+- The dashboard and Insights page explain patterns and changes to support user review and everyday decisions.
+
+This is an evolving product foundation. It does not provide clinical risk scores, diagnoses, treatment recommendations, or emergency monitoring.
 
 ## Run locally
 

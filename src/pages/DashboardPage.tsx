@@ -16,6 +16,10 @@ import { buildHealthInsights } from '../services/insights'
 import type { MetricCardData, MetricKey, TimelineEvent } from '../types/health'
 import type { Database } from '../types/database'
 import { displayTemperature, getMeasurementSystem } from '../utils/measurementUnits'
+import { ActiveAlertBanner } from '../components/ActiveAlertBanner.tsx'
+import { HealthTrendsChart } from '../components/HealthTrendsChart'
+import { synchronizeHealthData, isNativeHealthSyncAvailable } from '../services/wearableSync';
+import { NotificationDrawer } from '../components/NotificationDrawer.tsx'
 
 type Measurement = Database['public']['Tables']['health_measurements']['Row']
 type MetricDefinition = {
@@ -105,8 +109,8 @@ export function DashboardPage() {
   const [measurements, setMeasurements] = useState<Measurement[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
-
-  useEffect(() => {
+  const [isNotificationOpen, setIsNotificationOpen] = useState(false)
+ useEffect(() => {
     let active = true
 
     async function loadDashboard() {
@@ -126,6 +130,16 @@ export function DashboardPage() {
 
       setLoading(true)
       setError('')
+
+      // 🚀 Trigger native health data background sync if available on device
+      if (isNativeHealthSyncAvailable()) {
+        try {
+          await synchronizeHealthData(supabase, user.id, 7) // Syncs past 7 days automatically
+        } catch (syncErr) {
+          console.error('Background sync skipped or failed:', syncErr)
+        }
+      }
+
       const [profileResult, measurementsResult] = await Promise.all([
         supabase.from('health_profiles').select('display_name').eq('user_id', user.id).maybeSingle(),
         supabase.from('health_measurements').select('*').eq('user_id', user.id)
@@ -156,6 +170,7 @@ export function DashboardPage() {
 
   return (
     <div className="space-y-6">
+      <ActiveAlertBanner />
       <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <div className="flex items-center gap-3">
           <AuraMark className="size-10" />
@@ -171,7 +186,6 @@ export function DashboardPage() {
           <p>{latestMeasurement ? `Updated ${formatDate(latestMeasurement.recorded_at)}` : 'Your saved measurements and health insights'}</p>
         </div>
       </div>
-
 
       {error && <div role="alert" className="rounded-2xl border border-red-400/30 bg-red-400/10 px-4 py-3 text-sm text-red-200">{error}</div>}
       {loading ? (
@@ -196,6 +210,9 @@ export function DashboardPage() {
             <div className="lg:col-span-2"><ActivityViz measurements={measurements} /></div>
           </section>
 
+          {/* Render the Z-Score Trends Chart */}
+          <HealthTrendsChart />
+
           <InsightCard insights={insights} />
 
           <section className="grid gap-4 lg:grid-cols-5">
@@ -204,6 +221,12 @@ export function DashboardPage() {
           </section>
         </>
       )}
+      {/* In-App Notification History Drawer */}
+      <NotificationDrawer 
+        isOpen={isNotificationOpen} 
+        onClose={() => setIsNotificationOpen(false)} 
+      />
     </div>
   )
 }
+    

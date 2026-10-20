@@ -61,7 +61,7 @@ export function LandingPage() {
 
         <main className="flex flex-1 flex-col justify-center py-16">
           <p className="text-[11px] font-semibold uppercase tracking-[0.28em] text-pulse">
-            Personal health intelligence
+            Personal health risk insights & decision support
           </p>
 
           <h1 className="mt-5 max-w-4xl font-display text-5xl leading-[0.95] tracking-[-0.06em] text-snow sm:text-7xl">
@@ -72,9 +72,11 @@ export function LandingPage() {
           </h1>
 
           <p className="mt-6 max-w-2xl text-base leading-7 text-haze sm:text-lg">
-            Aura brings your health measurements, personal patterns, context,
-            and trends together to help you understand what is changing over
-            time — and what deserves a closer look.
+            Aura brings your health measurements, personal patterns, and
+            context together to surface notable changes and explain why they
+            may deserve a closer look. Use these non-diagnostic insights to
+            support informed conversations and everyday decisions about your
+            wellbeing.
           </p>
 
           <div className="mt-8 flex flex-wrap gap-3">

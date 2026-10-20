@@ -12,7 +12,9 @@ import { PageHeader } from '../components/ui/PageHeader'
 import { useAuth } from '../context/AuthContext'
 import { getSupabaseClient } from '../lib/supabase'
 import { displayTemperature, getMeasurementSystem, storedTemperature } from '../utils/measurementUnits'
-import { notifyHealthUpdate } from '../services/healthNotifications'
+import { analyzeHealthHistory } from '../utils/healthAnalysis'
+import { evaluateMultiModalRisk } from '../engine/riskEngine/multiModalEvaluator'
+import { fireAlert } from '../engine/alerting/alertService'
 
 type FormState = {
   recordedAt: string
@@ -427,7 +429,47 @@ export function HealthDataPage() {
       )
 
       if (user.user_metadata?.aura_notifications_enabled !== false && latestMeasurements?.length) {
-        void notifyHealthUpdate(latestMeasurements as any).catch((notificationError) => console.warn('Health notification could not be shown:', notificationError))
+        void (async () => {
+          try {
+            const sorted = [...(latestMeasurements as any[])].sort(
+              (a, b) => Date.parse(b.recorded_at) - Date.parse(a.recorded_at),
+            )
+
+            // Run the full personal-baseline analysis
+            const analysis = analyzeHealthHistory(sorted as any)
+
+            // Build the biometric snapshot from the most recent reading
+            const latest = sorted[0] as any
+            const snapshot = {
+              systolicMmhg: latest.systolic_mmhg ?? null,
+              diastolicMmhg: latest.diastolic_mmhg ?? null,
+              spo2Pct: latest.spo2_pct ?? null,
+              heartRateBpm: latest.heart_rate_bpm ?? null,
+            }
+
+            // Include the symptom that was just logged (if any)
+            const symptoms: Array<{ name: string; severity: number | null }> =
+              form.symptom !== 'No unusual symptoms'
+                ? [{
+                    name: form.symptom,
+                    severity: form.symptomSeverity
+                      ? Number(form.symptomSeverity)
+                      : null,
+                  }]
+                : []
+
+            // Run the multi-modal evaluator (false-stable prevention)
+            const verdict = evaluateMultiModalRisk({
+              biometricStatus: analysis.status,
+              snapshot,
+              symptoms,
+            })
+
+            await fireAlert(verdict)
+          } catch (notificationError) {
+            console.warn('Health alert could not be dispatched:', notificationError)
+          }
+        })()
       }
 
       setSaved(true)

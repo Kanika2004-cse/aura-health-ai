@@ -35,6 +35,7 @@ export interface Database {
           user_id: string
         }
         Update: Partial<Database['public']['Tables']['health_profiles']['Row']>
+        Relationships: []
       }
       health_measurements: {
         Row: {
@@ -59,6 +60,7 @@ export interface Database {
           recorded_at: string
         }
         Update: Partial<Database['public']['Tables']['health_measurements']['Row']>
+        Relationships: []
       }
       activity_context: {
         Row: {
@@ -77,6 +79,7 @@ export interface Database {
           activity_type: string
         }
         Update: Partial<Database['public']['Tables']['activity_context']['Row']>
+        Relationships: []
       }
       symptoms: {
         Row: {
@@ -94,6 +97,27 @@ export interface Database {
           name: string
         }
         Update: Partial<Database['public']['Tables']['symptoms']['Row']>
+        Relationships: []
+      }
+      active_health_alerts: {
+        Row: {
+          id: string
+          user_id: string
+          severity: 'MONITOR' | 'PRIORITY'
+          title: string
+          message: string
+          status: 'ACTIVE' | 'ACKNOWLEDGED'
+          acknowledged_at: string | null
+          created_at: string
+        }
+        Insert: Partial<Database['public']['Tables']['active_health_alerts']['Row']> & {
+          user_id: string
+          severity: 'MONITOR' | 'PRIORITY'
+          title: string
+          message: string
+        }
+        Update: Partial<Database['public']['Tables']['active_health_alerts']['Row']>
+        Relationships: []
       }
       personal_baselines: {
         Row: {
@@ -113,6 +137,7 @@ export interface Database {
           metric: string
         }
         Update: Partial<Database['public']['Tables']['personal_baselines']['Row']>
+        Relationships: []
       }
       health_events: {
         Row: {
@@ -131,6 +156,7 @@ export interface Database {
           title: string
         }
         Update: Partial<Database['public']['Tables']['health_events']['Row']>
+        Relationships: []
       }
       health_insights: {
         Row: {
@@ -149,6 +175,7 @@ export interface Database {
           body: string
         }
         Update: Partial<Database['public']['Tables']['health_insights']['Row']>
+        Relationships: []
       }
       emergency_contacts: {
         Row: {
@@ -166,6 +193,7 @@ export interface Database {
           name: string
         }
         Update: Partial<Database['public']['Tables']['emergency_contacts']['Row']>
+        Relationships: []
       }
       connected_devices: {
         Row: {
@@ -182,6 +210,7 @@ export interface Database {
           name: string
         }
         Update: Partial<Database['public']['Tables']['connected_devices']['Row']>
+        Relationships: []
       }
       analysis_results: {
         Row: {
@@ -197,6 +226,7 @@ export interface Database {
           analysis_type: string
         }
         Update: Partial<Database['public']['Tables']['analysis_results']['Row']>
+        Relationships: []
       }
       model_predictions: {
         Row: {
@@ -212,6 +242,7 @@ export interface Database {
           user_id: string
         }
         Update: Partial<Database['public']['Tables']['model_predictions']['Row']>
+        Relationships: []
       }
       model_versions: {
         Row: {
@@ -226,7 +257,12 @@ export interface Database {
           version: string
         }
         Update: Partial<Database['public']['Tables']['model_versions']['Row']>
+        Relationships: []
       }
     }
+    Views: Record<string, never>
+    Functions: Record<string, never>
+    Enums: Record<string, never>
+    CompositeTypes: Record<string, never>
   }
 }
