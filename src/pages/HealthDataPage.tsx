@@ -4,6 +4,7 @@ import {
   CheckCircle2,
   History,
   Save,
+  ShieldAlert,
 } from 'lucide-react'
 
 import { Button } from '../components/ui/Button'
@@ -94,12 +95,17 @@ export function HealthDataPage() {
   const savedToastTimer = useRef<number | null>(null)
   const [error, setError] = useState('')
 
+  // Allergies state
+  const [allergies, setAllergies] = useState('')
+  const [savingAllergies, setSavingAllergies] = useState(false)
+  const [allergiesSaved, setAllergiesSaved] = useState(false)
+
   useEffect(() => () => {
     if (savedToastTimer.current !== null) window.clearTimeout(savedToastTimer.current)
   }, [])
 
   useEffect(() => {
-    async function loadRecentMeasurements() {
+    async function loadInitialData() {
       if (!user) {
         setRecentMeasurements([])
         setLoadingHistory(false)
@@ -116,7 +122,7 @@ export function HealthDataPage() {
       setLoadingHistory(true)
 
       try {
-        const { data, error } = await supabase
+        const { data: measurementsData, error: measurementsError } = await supabase
           .from('health_measurements')
           .select(
             `
@@ -138,14 +144,24 @@ export function HealthDataPage() {
           .order('recorded_at', { ascending: false })
           .limit(20)
 
-        if (error) throw error
+        if (measurementsError) throw measurementsError
 
         setRecentMeasurements(
-          (data ?? []) as RecentMeasurement[],
+          (measurementsData ?? []) as RecentMeasurement[],
         )
+
+        // Load profile allergies using 'profiles' cast as any
+        const { data: profileData } = await (supabase.from('profiles' as any) as any)
+          .select('allergies')
+          .eq('id', user.id)
+          .single()
+
+        if (profileData && typeof profileData === 'object' && 'allergies' in profileData) {
+          setAllergies((profileData as any).allergies || '')
+        }
       } catch (historyError) {
         console.error(
-          'Unable to load health history:',
+          'Unable to load health history or profile:',
           historyError,
         )
       } finally {
@@ -153,7 +169,7 @@ export function HealthDataPage() {
       }
     }
 
-    void loadRecentMeasurements()
+    void loadInitialData()
   }, [user])
 
   function updateField(
@@ -167,6 +183,33 @@ export function HealthDataPage() {
 
     setSaved(false)
     setError('')
+  }
+
+  async function handleSaveAllergies(e: React.FormEvent) {
+    e.preventDefault()
+    if (!user) return
+
+    const supabase = getSupabaseClient()
+    if (!supabase) return
+
+    setSavingAllergies(true)
+    setAllergiesSaved(false)
+
+    try {
+      const { error: updateError } = await (supabase.from('profiles' as any) as any)
+        .update({ allergies, updated_at: new Date().toISOString() })
+        .eq('id', user.id)
+
+      if (updateError) throw updateError
+
+      setAllergiesSaved(true)
+      setTimeout(() => setAllergiesSaved(false), 2000)
+    } catch (err) {
+      console.error('Failed to save allergies:', err)
+      setError('Failed to update allergies.')
+    } finally {
+      setSavingAllergies(false)
+    }
   }
 
   function validate() {
@@ -317,10 +360,6 @@ export function HealthDataPage() {
         return
       }
 
-      // --------------------------------------------------
-      // Save health measurement
-      // --------------------------------------------------
-
       const { error: measurementError } = await supabase
         .from('health_measurements')
         .insert({
@@ -340,14 +379,6 @@ export function HealthDataPage() {
       if (measurementError) {
         throw measurementError
       }
-
-      // --------------------------------------------------
-      // Save activity context
-      //
-      // Activity remains duration-based.
-      // The current database uses occurred_at.
-      // We intentionally keep this simple for Phase 1.
-      // --------------------------------------------------
 
       if (form.activity) {
         const activityPayload = {
@@ -378,10 +409,6 @@ export function HealthDataPage() {
         }
       }
 
-      // --------------------------------------------------
-      // Save symptom
-      // --------------------------------------------------
-
       if (form.symptom !== 'No unusual symptoms') {
         const { error: symptomError } = await supabase
           .from('symptoms')
@@ -397,10 +424,6 @@ export function HealthDataPage() {
           throw symptomError
         }
       }
-
-      // --------------------------------------------------
-      // Refresh health memory
-      // --------------------------------------------------
 
       const { data: latestMeasurements } = await supabase
         .from('health_measurements')
@@ -435,10 +458,8 @@ export function HealthDataPage() {
               (a, b) => Date.parse(b.recorded_at) - Date.parse(a.recorded_at),
             )
 
-            // Run the full personal-baseline analysis
             const analysis = analyzeHealthHistory(sorted as any)
 
-            // Build the biometric snapshot from the most recent reading
             const latest = sorted[0] as any
             const snapshot = {
               systolicMmhg: latest.systolic_mmhg ?? null,
@@ -447,7 +468,6 @@ export function HealthDataPage() {
               heartRateBpm: latest.heart_rate_bpm ?? null,
             }
 
-            // Include the symptom that was just logged (if any)
             const symptoms: Array<{ name: string; severity: number | null }> =
               form.symptom !== 'No unusual symptoms'
                 ? [{
@@ -458,14 +478,14 @@ export function HealthDataPage() {
                   }]
                 : []
 
-            // Run the multi-modal evaluator (false-stable prevention)
             const verdict = evaluateMultiModalRisk({
               biometricStatus: analysis.status,
               snapshot,
               symptoms,
             })
 
-            await fireAlert(verdict)
+            // Passed userId inside options object to satisfy fireAlert signature
+            await fireAlert(verdict, { userId: user.id })
           } catch (notificationError) {
             console.warn('Health alert could not be dispatched:', notificationError)
           }
@@ -501,17 +521,54 @@ export function HealthDataPage() {
     <>
       <PageHeader
         title="Health data"
-        description="Record your health measurements, symptoms, and activity."
+        description="Record your health measurements, symptoms, and clinical profile."
       />
+
+      <div className="mb-5">
+        <Card>
+          <div className="mb-4 flex items-center gap-3">
+            <div className="flex size-10 shrink-0 items-center justify-center rounded-2xl bg-pulse/10 text-pulse">
+              <ShieldAlert className="size-5" />
+            </div>
+            <div>
+              <h2 className="font-display text-xl text-snow">Clinical Allergies</h2>
+              <p className="mt-1 text-sm text-haze">Specify any food, drug, or environmental allergies for your medical summary report.</p>
+            </div>
+          </div>
+
+          <form onSubmit={handleSaveAllergies} className="space-y-4">
+            <textarea
+              rows={2}
+              value={allergies}
+              onChange={(e) => setAllergies(e.target.value)}
+              placeholder="e.g., Penicillin, Peanuts, Latex..."
+              className="w-full resize-none rounded-2xl border border-line bg-ink px-4 py-3 text-sm text-snow outline-none transition placeholder:text-haze/60 focus:border-pulse"
+            />
+
+            <div className="flex items-center justify-between gap-3">
+              {allergiesSaved ? (
+                <div role="status" className="flex items-center gap-2 text-sm text-emerald-200">
+                  <CheckCircle2 className="size-4" />
+                  Allergies saved successfully.
+                </div>
+              ) : <div />}
+
+              <Button
+                type="submit"
+                disabled={savingAllergies}
+              >
+                <Save className="mr-2 size-4" />
+                {savingAllergies ? 'Saving...' : 'Save allergies'}
+              </Button>
+            </div>
+          </form>
+        </Card>
+      </div>
 
       <form
         onSubmit={handleSubmit}
         className="space-y-5"
       >
-        {/* --------------------------------------------------
-            Measurements
-        -------------------------------------------------- */}
-
         <Card>
           <div className="mb-5">
             <h2 className="font-display text-xl text-snow">
@@ -639,10 +696,6 @@ export function HealthDataPage() {
           </div>
         </Card>
 
-        {/* --------------------------------------------------
-            Activity
-        -------------------------------------------------- */}
-
         <Card>
           <div className="mb-5">
             <h2 className="font-display text-xl text-snow">
@@ -701,10 +754,6 @@ export function HealthDataPage() {
             />
           </div>
         </Card>
-
-        {/* --------------------------------------------------
-            Symptoms
-        -------------------------------------------------- */}
 
         <Card>
           <div className="mb-5">
@@ -779,10 +828,6 @@ export function HealthDataPage() {
           </div>
         </Card>
 
-        {/* --------------------------------------------------
-            Additional notes
-        -------------------------------------------------- */}
-
         <Card>
           <TextAreaField
             label="Additional notes"
@@ -793,10 +838,6 @@ export function HealthDataPage() {
             placeholder="Optional notes about this reading..."
           />
         </Card>
-
-        {/* --------------------------------------------------
-            Status
-        -------------------------------------------------- */}
 
         {error && (
           <div className="rounded-2xl border border-red-400/30 bg-red-400/10 px-4 py-3 text-sm text-red-200">
@@ -824,10 +865,6 @@ export function HealthDataPage() {
           </Button>
         </div>
       </form>
-
-      {/* --------------------------------------------------
-          Health Memory
-      -------------------------------------------------- */}
 
       <div className="mt-8">
         <Card>

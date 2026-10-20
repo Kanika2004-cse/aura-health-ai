@@ -93,7 +93,7 @@ export function createHealthReportPdf(report: HealthReportData) {
   function rectangle(x: number, top: number, width: number, height: number, fill: string, stroke = BORDER) {
     raw(`q ${fill} rg ${stroke} RG 0.5 w ${x} ${PAGE_HEIGHT - top - height} ${width} ${height} re B Q`)
   }
-  function drawGridRow(cells: Array<{ label: string; value: unknown; widths: number[] }>, top: number, height: number) {
+  function drawGridRow(cells: Array<{ label: string; value: unknown; widths: [number, number] }>, top: number, height: number) {
     let x = LEFT
     for (const cell of cells) {
       const [labelWidth, valueWidth] = cell.widths
@@ -109,23 +109,36 @@ export function createHealthReportPdf(report: HealthReportData) {
     y = top + height
   }
   function demographics() {
-    text('PATIENT DEMOGRAPHICS', LEFT + 8, y, 9, true)
+    text('PATIENT DEMOGRAPHICS & CLINICAL PROFILE', LEFT + 8, y, 9, true)
     y += 17
-    const col = [
-      { label: 'Name', value: report.profile?.display_name ?? report.accountEmail, widths: [54, 92] },
-      { label: 'Blood group', value: report.profile?.blood_group, widths: [64, 69] },
-      { label: 'Date of birth', value: report.profile?.date_of_birth, widths: [71, 149] },
-    ]
-    drawGridRow(col, y, 26)
+    
+    // Each row spans exactly CONTENT_WIDTH (499 pts), divided into 3 equal columns of ~166 pts each
+    // Column 1: Label 54, Value 112 = 166
+    // Column 2: Label 54, Value 112 = 166
+    // Column 3: Label 75, Value 92 = 167 (Total = 499)
+    
+    // Row 1: Name, Sex, Blood group
     drawGridRow([
-      { label: 'Sex', value: report.profile?.biological_sex, widths: [54, 92] },
-      { label: 'Height', value: report.profile?.height_cm ? `${report.profile.height_cm} cm` : null, widths: [64, 69] },
-      { label: 'Weight', value: report.profile?.weight_kg ? `${report.profile.weight_kg} kg` : null, widths: [71, 149] },
+      { label: 'Name', value: report.profile?.display_name ?? 'Aura Patient', widths: [54, 112] },
+      { label: 'Sex', value: report.profile?.biological_sex, widths: [54, 112] },
+      { label: 'Blood group', value: report.profile?.blood_group, widths: [75, 92] },
     ], y, 26)
-    drawGridRow([{ label: 'Email', value: report.accountEmail, widths: [54, CONTENT_WIDTH - 54] }], y, 26)
+
+    // Row 2: Height, Weight, Date of birth
+    drawGridRow([
+      { label: 'Height', value: report.profile?.height_cm ? `${report.profile.height_cm} cm` : null, widths: [54, 112] },
+      { label: 'Weight', value: report.profile?.weight_kg ? `${report.profile.weight_kg} kg` : null, widths: [54, 112] },
+      { label: 'Date of birth', value: report.profile?.date_of_birth, widths: [75, 92] },
+    ], y, 26)
+
+    // Row 3: Allergies spanning full width
+    drawGridRow([
+      { label: 'Allergies', value: report.profile?.allergies, widths: [54, CONTENT_WIDTH - 54] },
+    ], y, 26)
+
     y += 14
   }
-  function startPage() {
+  function startPage(isFirstPage = false) {
     if (pageOpen) pages.push(commands)
     commands = []
     pageOpen = true
@@ -138,11 +151,16 @@ export function createHealthReportPdf(report: HealthReportData) {
     text('+', 440, 29, 19, true, '1 1 1')
     text('AURA', 466, 30, 10, true, '1 1 1')
     text('HEALTH', 466, 43, 8, false, '1 1 1')
-    y = 106
-    demographics()
+    
+    if (isFirstPage) {
+      y = 106
+      demographics()
+    } else {
+      y = 106 // Demographics are NEVER rendered on page 2 or later pages!
+    }
   }
   function ensure(height: number) {
-    if (y + height > BOTTOM) startPage()
+    if (y + height > BOTTOM) startPage(false)
   }
   function section(title: string) {
     ensure(85)
@@ -160,7 +178,7 @@ export function createHealthReportPdf(report: HealthReportData) {
     do {
       const availableLines = Math.floor((BOTTOM - y - 16) / lineHeight)
       if (availableLines < 1) {
-        startPage()
+        startPage(false)
         continue
       }
       const chunk = remaining.slice(0, Math.min(remaining.length, availableLines, 48))
@@ -184,12 +202,8 @@ export function createHealthReportPdf(report: HealthReportData) {
   }
   function blankRow(label: string) { tableRow(label, 'No records available.') }
 
-  startPage()
-  drawGridRow([
-    { label: 'Allergies', value: report.profile?.allergies, widths: [75, 174] },
-    { label: 'Medications', value: report.profile?.medications, widths: [87, CONTENT_WIDTH - 75 - 174 - 87] },
-  ], y, 31)
-  y += 12
+  startPage(true)
+  
   section('Medical history and notes')
   tableRow('Known conditions', report.profile?.conditions)
   tableRow('Important medical information', report.profile?.medical_notes)
