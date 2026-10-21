@@ -35,6 +35,13 @@ export type MeasurementForAnalysis = {
   sleep_minutes: number | null
 }
 
+export type ActivityContextForAnalysis = {
+  id?: string
+  occurred_at: string
+  activity_type: string | null
+  intensity?: string | null
+}
+
 export type BaselineSummary = {
   metric: HealthMetricKey
   baseline: number | null
@@ -59,6 +66,12 @@ export type MetricAnalysis = {
   explanation: string
 }
 
+export type ClinicalEvaluationResult = {
+  status: 'learning' | 'stable' | 'elevated_activity' | 'hypertension_stage_1' | 'hypertension_stage_2'
+  title: string
+  message: string
+}
+
 export type HealthAnalysis = {
   maturity: AnalysisMaturity
   status: HealthStatus
@@ -66,6 +79,7 @@ export type HealthAnalysis = {
   windowDays: number
   latestRecordedAt: string | null
   metrics: MetricAnalysis[]
+  clinicalEvaluation?: ClinicalEvaluationResult
   summary: string
 }
 
@@ -120,11 +134,6 @@ function sortMeasurements(
 
 /**
  * Determines how mature the user's personal history is.
- *
- * This is separate from health status.
- *
- * Multiple readings on the same day do not count as
- * multiple days of history.
  */
 export function getAnalysisMaturity(
   measurements: MeasurementForAnalysis[],
@@ -183,8 +192,6 @@ export function getAnalysisMaturity(
 /**
  * Calculates a personal baseline from previous readings
  * inside the latest 7-day window.
- *
- * The current reading is excluded from the baseline.
  */
 function calculateMetricSummary(
   measurements: MeasurementForAnalysis[],
@@ -316,9 +323,6 @@ function calculateMetricSummary(
 /**
  * Measures whether recent readings repeatedly move in the
  * same direction as the current deviation.
- *
- * This is intentionally a temporal evidence feature.
- * It is NOT a clinical rule.
  */
 function calculatePersistence(
   measurements: MeasurementForAnalysis[],
@@ -368,11 +372,6 @@ function calculatePersistence(
     }
   }
 
-  /**
-   * Look at up to the three previous valid readings.
-   * These are evidence for persistence, not a clinical
-   * threshold.
-   */
   const previousValues = sorted
     .slice(1, 4)
     .map((measurement) =>
@@ -447,15 +446,6 @@ export function buildSevenDayBaseline(
   }
 }
 
-/**
- * Determines whether the deviation is large enough to
- * be considered meaningful evidence.
- *
- * This is deliberately NOT converted directly into
- * Stable / Monitor / Priority.
- *
- * The decision layer also considers persistence.
- */
 function hasMeaningfulDeviation(
   deviationPercent: number | null,
 ): boolean {
@@ -466,13 +456,6 @@ function hasMeaningfulDeviation(
     return false
   }
 
-  /**
-   * Small changes are treated as normal measurement
-   * variation for this initial implementation.
-   *
-   * This is only a feature-engineering boundary.
-   * It does not determine the final health status.
-   */
   return Math.abs(deviationPercent) >= 10
 }
 
@@ -496,12 +479,6 @@ function analyzeMetric(
     }
   }
 
-  /**
-   * First reading:
-   *
-   * Aura analyzes the measurement but does not pretend
-   * that a personal baseline exists.
-   */
   if (summary.count === 0) {
     return {
       metric: summary.metric,
@@ -584,8 +561,89 @@ function analyzeMetric(
   }
 }
 
+/**
+ * Evaluates a 7-to-10 day rolling baseline of health telemetry,
+ * cross-referencing activity logs to distinguish between acute exercise spikes
+ * and sustained clinical patterns (e.g., Stage 1 or Stage 2 Hypertension).
+ */
+export function evaluateClinicalTrends10Day(
+  measurements: MeasurementForAnalysis[],
+  activities: ActivityContextForAnalysis[] = []
+): ClinicalEvaluationResult {
+  if (!measurements || measurements.length === 0) {
+    return {
+      status: 'learning',
+      title: 'Baseline Learning (0/5)',
+      message: 'Aura is collecting your initial health data to build a 10-day personal baseline.'
+    }
+  }
+
+  const sorted = sortMeasurements(measurements)
+  const tenDaysAgo = Date.now() - 10 * 24 * 60 * 60 * 1000
+  const windowReadings = sorted.filter(
+    (m) => new Date(m.recorded_at).getTime() >= tenDaysAgo
+  )
+
+  if (windowReadings.length < 5) {
+    return {
+      status: 'learning',
+      title: `Baseline Learning (${windowReadings.length}/5 minimum)`,
+      message: 'Keep logging your daily readings. Aura requires at least 5 entries across a 10-day window to evaluate sustained patterns.'
+    }
+  }
+
+  const systolicValues = windowReadings
+    .map((m) => m.systolic_mmhg)
+    .filter((v): v is number => v !== null)
+
+  if (systolicValues.length === 0) {
+    return {
+      status: 'stable',
+      title: 'Stable Baseline',
+      message: 'No blood pressure readings recorded in your 10-day window.'
+    }
+  }
+
+  const avgSystolic = systolicValues.reduce((a, b) => a + b, 0) / systolicValues.length
+
+  const recentIntenseActivity = activities.find((a) => {
+    const time = new Date(a.occurred_at).getTime()
+    const type = a.activity_type?.toLowerCase() || ''
+    return time >= tenDaysAgo && (type.includes('exercise') || type.includes('cycling') || type.includes('high'))
+  })
+
+  if (avgSystolic >= 130 && avgSystolic <= 139) {
+    if (recentIntenseActivity) {
+      return {
+        status: 'elevated_activity',
+        title: 'Elevated Readings (Activity Linked)',
+        message: `Your 10-day average systolic pressure is ${Math.round(avgSystolic)} mmHg (Stage 1 range), but physical activity (${recentIntenseActivity.activity_type}) was logged nearby. This elevation may be exercise-induced.`
+      }
+    } else {
+      return {
+        status: 'hypertension_stage_1',
+        title: 'Sustained Stage 1 Hypertension Pattern',
+        message: `Over your 10-day monitoring window, your average systolic pressure has remained elevated at ${Math.round(avgSystolic)} mmHg at rest (no intense physical activity logged). We recommend consulting your physician.`
+      }
+    }
+  } else if (avgSystolic >= 140) {
+    return {
+      status: 'hypertension_stage_2',
+      title: 'Sustained Cardiovascular Strain Detected',
+      message: `Clinical Alert: Your 10-day average systolic pressure is averaging ${Math.round(avgSystolic)} mmHg. Sustained patterns at rest indicate elevated cardiovascular strain. Please schedule a doctor consultation.`
+    }
+  }
+
+  return {
+    status: 'stable',
+    title: 'Stable 10-Day Baselines',
+    message: 'Your 10-day health telemetry remains within optimal clinical baselines with no sustained anomalies detected.'
+  }
+}
+
 export function analyzeHealthHistory(
   measurements: MeasurementForAnalysis[],
+  activities: ActivityContextForAnalysis[] = []
 ): HealthAnalysis {
   const sorted =
     sortMeasurements(measurements)
@@ -626,6 +684,8 @@ export function analyzeHealthHistory(
 
   const status =
     combineDecisionStatuses(metrics)
+
+  const clinicalEvaluation = evaluateClinicalTrends10Day(sorted, activities)
 
   const earliestValidMeasurement =
     [...sorted]
@@ -693,6 +753,7 @@ export function analyzeHealthHistory(
     windowDays,
     latestRecordedAt,
     metrics,
+    clinicalEvaluation,
     summary,
   }
 }
