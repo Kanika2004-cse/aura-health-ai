@@ -1,7 +1,7 @@
 import { LocalNotifications } from '@capacitor/local-notifications';
 import type { RiskSeverity } from '../riskEngine/decision';
 
-interface AlertPayload {
+export interface AlertPayload {
   userId: string;
   severity: RiskSeverity;
   title: string;
@@ -9,8 +9,18 @@ interface AlertPayload {
   symptomName?: string;
 }
 
+export type FireAlertOptions = {
+  userId: string;
+  title?: string;
+  symptomName?: string;
+};
+
 const lastAlertTimestamps: Record<string, number> = {};
 const COOLDOWN_MS = 60 * 60 * 1000; // 1 hour cooldown
+
+export function clearAlertDedupState() {
+  Object.keys(lastAlertTimestamps).forEach(key => delete lastAlertTimestamps[key]);
+}
 
 export function shouldDispatchAlert(alertKey: string): boolean {
   const now = Date.now();
@@ -67,17 +77,18 @@ export async function processAlert(payload: AlertPayload) {
 
 export async function fireAlert(
   verdictOrSeverity: { finalStatus: RiskSeverity; rationale: string } | RiskSeverity,
-  options: { userId: string; title?: string; symptomName?: string }
+  options?: FireAlertOptions
 ) {
   const severity = typeof verdictOrSeverity === 'string' ? verdictOrSeverity : verdictOrSeverity.finalStatus;
   const message = typeof verdictOrSeverity === 'string' ? 'Health status updated.' : verdictOrSeverity.rationale;
-  const title = options.title || (severity === 'PRIORITY' ? 'Critical Health Alert' : 'Health Monitoring Notice');
+  const title = options?.title || (severity === 'PRIORITY' ? 'Critical Health Alert' : 'Health Monitoring Notice');
+  const userId = options?.userId || 'default-user';
 
   return await processAlert({
-    userId: options.userId,
+    userId,
     severity,
     title,
     message,
-    symptomName: options.symptomName,
+    symptomName: options?.symptomName,
   });
 }

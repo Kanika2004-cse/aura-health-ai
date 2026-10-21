@@ -1,77 +1,86 @@
-/**
- * services/healthNotifications.ts
- *
- * Thin compatibility wrapper that preserves the existing call signature
- * (`notifyHealthUpdate(measurements)`) while delegating the full
- * notification lifecycle to engine/alerting/alertService.
- *
- * New code should call `fireAlert(verdict)` directly from engine/alerting.
- * This wrapper exists so that existing call sites in HealthDataPage.tsx
- * continue to work without changes until they are migrated to the richer
- * evaluateMultiModalRisk + fireAlert pattern.
- *
- * Permission management is also delegated to the alert service, which handles
- * both Capacitor LocalNotifications and the Web Notifications API.
- */
-
-import { Capacitor } from '@capacitor/core'
 import { LocalNotifications } from '@capacitor/local-notifications'
+import { getSupabaseClient } from '../lib/supabase'
+import { fireAlert } from '../engine/alerting'
+import type { RiskSeverity } from '../engine/riskEngine/decision'
 
-import { analyzeHealthHistory, type MeasurementForAnalysis } from '../utils/healthAnalysis'
-import { evaluateMultiModalRisk } from '../engine/riskEngine/multiModalEvaluator'
-import { fireAlert } from '../engine/alerting/alertService'
+type MeasurementRow = {
+  id: string
+  recorded_at: string
+  systolic_mmhg: number | null
+  diastolic_mmhg: number | null
+  heart_rate_bpm: number | null
+  spo2_pct: number | null
+  temperature_c: number | null
+  steps: number | null
+  sleep_minutes: number | null
+}
 
-// Re-export permission helper so existing callers of
-// requestHealthNotificationPermission() continue to work.
-export async function requestHealthNotificationPermission(): Promise<boolean> {
-  if (Capacitor.isNativePlatform()) {
-    const current = await LocalNotifications.checkPermissions()
-    if (current.display === 'granted') return true
-    const requested = await LocalNotifications.requestPermissions()
-    return requested.display === 'granted'
+export async function requestHealthNotificationPermission() {
+  try {
+    const permStatus = await LocalNotifications.checkPermissions()
+    if (permStatus.display !== 'granted') {
+      await LocalNotifications.requestPermissions()
+    }
+    return true
+  } catch (e) {
+    console.log('Notifications not available or web environment:', e)
+    return false
   }
+}
 
-  if (typeof Notification === 'undefined') return false
-  if (Notification.permission === 'granted') return true
-  if (Notification.permission === 'denied') return false
-  return (await Notification.requestPermission()) === 'granted'
+export async function notifyHealthUpdate(measurements: MeasurementRow[]) {
+  return await evaluateAndNotifyHealth(measurements)
 }
 
 /**
- * Compatibility shim: accepts the last N measurements, runs the full
- * multi-modal risk evaluation, and fires an alert if warranted.
- *
- * The most recent measurement's biometrics are used as the snapshot for
- * absolute threshold evaluation.
+ * Evaluates health telemetry measurements and triggers local notifications / alerts
+ * if anomalies or priority risk levels are detected.
  */
-export async function notifyHealthUpdate(
-  measurements: MeasurementForAnalysis[],
-): Promise<void> {
-  if (!measurements.length) return
-
-  const sorted = [...measurements].sort(
-    (a, b) => Date.parse(b.recorded_at) - Date.parse(a.recorded_at),
-  )
-
-  // Run the existing personal-baseline analysis pipeline
-  const analysis = analyzeHealthHistory(sorted)
-
-  // Build a biometric snapshot from the most recent reading
-  const latest = sorted[0]
-  const snapshot = {
-    systolicMmhg: latest.systolic_mmhg ?? null,
-    diastolicMmhg: latest.diastolic_mmhg ?? null,
-    spo2Pct: latest.spo2_pct ?? null,
-    heartRateBpm: latest.heart_rate_bpm ?? null,
+export async function evaluateAndNotifyHealth(measurements: MeasurementRow[]) {
+  if (!measurements || measurements.length === 0) {
+    return
   }
 
-  // Run the multi-modal evaluator (symptoms are not available in the legacy
-  // call path — HealthDataPage.tsx's post-save handler passes them directly)
-  const verdict = evaluateMultiModalRisk({
-    biometricStatus: analysis.status,
-    snapshot,
-    symptoms: [],
-  })
+  const supabase = getSupabaseClient()
+  if (!supabase) {
+    return
+  }
 
-  await fireAlert(verdict)
+  // Get current authenticated user ID
+  const { data: { session } } = await supabase.auth.getSession()
+  const userId = session?.user?.id
+
+  if (!userId) {
+    console.log('No active user session found for health notifications.')
+    return
+  }
+
+  // Sort measurements newest first
+  const sorted = [...measurements].sort(
+    (a, b) => new Date(b.recorded_at).getTime() - new Date(a.recorded_at).getTime()
+  )
+
+  const latest = sorted[0]
+
+  let verdict: { finalStatus: RiskSeverity; rationale: string } | null = null
+
+  if (latest.systolic_mmhg !== null && latest.systolic_mmhg >= 140) {
+    verdict = {
+      finalStatus: 'PRIORITY',
+      rationale: `Critical Alert: Systolic blood pressure reached ${latest.systolic_mmhg} mmHg. Sustained high readings indicate cardiovascular strain.`
+    }
+  } else if (latest.heart_rate_bpm !== null && (latest.heart_rate_bpm > 120 || latest.heart_rate_bpm < 50)) {
+    verdict = {
+      finalStatus: 'MONITOR',
+      rationale: `Heart Rate Notice: Recorded heart rate of ${latest.heart_rate_bpm} BPM deviates from normal resting baselines.`
+    }
+  }
+
+  if (verdict) {
+    try {
+      await fireAlert(verdict, { userId })
+    } catch (err) {
+      console.error('Failed to fire health notification alert:', err)
+    }
+  }
 }
